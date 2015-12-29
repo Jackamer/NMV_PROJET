@@ -16,7 +16,7 @@ static int arg_pid;
 static int arg_sig;
 
 module_param(arg_pid, int, 0);
-module_param(arg_sig, int, 1); 
+module_param(arg_sig, int, 0); 
 
 /*
  * Send a signal to a process.
@@ -30,13 +30,16 @@ static int kill(int sig, pid_t upid)
 		goto err_find;
 	if(!kill_pid(p, sig, 0))
 		goto err_kill;
+	pr_debug("Signal successful send!\n");
+	put_pid(p);
 	return 0;
 	
 err_find:
-	pr_debug("Pid %d not found!\n", (int)upid);
+	pr_warn("Pid %d not found!\n", (int)upid);
 	return ESRCH;
-err_pid:
-	pr_debug("Fail to send sig to pid %d!\n", (int)upid);
+err_kill:
+	pr_warn("Fail to send sig to pid %d!\n", (int)upid);
+	put_pid(p);
 	return EPERM;
 }
 
@@ -44,6 +47,7 @@ static int mod_init(void)
 {
 	pr_debug("module loaded\n");
 	if(!arg_pid || !arg_sig)
+		pr_warn("Missing parameters!\n");
 		return EINVAL;
 	kill(arg_sig, arg_pid);
 	return 0;
