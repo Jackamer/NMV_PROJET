@@ -12,6 +12,12 @@ MODULE_DESCRIPTION("Module invite de commande");
 MODULE_AUTHOR("Arnaud GUERMONT");
 MODULE_LICENSE("GPL");
 
+static int arg_pid;
+static int arg_sig;
+
+module_param(arg_pid, int, 0);
+module_param(arg_sig, int, 1); 
+
 /*
  * Send a signal to a process.
  */
@@ -37,6 +43,9 @@ err_pid:
 static int mod_init(void)
 {
 	pr_debug("module loaded\n");
+	if(!arg_pid || !arg_sig)
+		return EINVAL;
+	kill(arg_sig, arg_pid);
 	return 0;
 }
 
