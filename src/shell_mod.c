@@ -5,81 +5,95 @@
 #include <linux/slab.h>
 #include <linux/pid.h>
 #include <linux/sched.h>
+#include <linux/uaccess.h>
+#include <linux/fs.h>
+#include "shell_mod.h"
 
 MODULE_DESCRIPTION("Module invite de commande");
 MODULE_AUTHOR("Arnaud GUERMONT");
 MODULE_LICENSE("GPL");
 
-static int arg_pid;
-static int arg_sig;
-
-module_param(arg_pid, int, 0);
-module_param(arg_sig, int, 0);
-
 struct kill_work {
-	int sig;
-	pid_t upid;
+	struct user_data *data;
 	struct work_struct task;
 };
-
 struct kill_work *worker;
 
-/*
- * Send a signal to a process.
- */
+/* Device major number. */
+static int major;
+static char *name = "shell_mod";
+static long device_ops(struct file *filp, unsigned int cmd, unsigned long arg);
+const struct file_operations ops = {
+	.unlocked_ioctl = device_ops
+};
+
+/* Send a signal to a process. */
 static int kill(int sig, pid_t upid)
 {
 	struct pid *p;
 
 	p = find_get_pid(upid);
-	if(!p)
-		goto err_find;
-	if(kill_pid(p, sig, 0) != 0)
-		goto err_kill;
+	if(!p) {
+		pr_err("Pid %d not found!\n", (int)upid);
+		return ESRCH;		
+	}
+	if(kill_pid(p, sig, 0) != 0) {
+		pr_err("Fail to send sig to pid %d!\n", (int)upid);
+		put_pid(p);
+		return EPERM;
+	}
 	pr_debug("Signal successful send!\n");
 	put_pid(p);
 	return 0;
-
-err_find:
-	pr_warn("Pid %d not found!\n", (int)upid);
-	return ESRCH;
-err_kill:
-	pr_warn("Fail to send sig to pid %d!\n", (int)upid);
-	put_pid(p);
-	return EPERM;
 }
 
 static void asyn_kill(struct work_struct *task)
 {
 	struct kill_work *kw = container_of(task, struct kill_work, task);
 	pr_debug("Doing kill in a work_queue!\n");
-	kill(kw->sig, kw->upid);
+	kill(kw->data->sig, kw->data->upid);
+	kfree(kw->data);
+}
+
+static long device_ops(struct file *filp, unsigned int cmd, unsigned long arg)
+{	
+	switch(cmd) {
+	case KILL:
+		pr_debug("kill ops!\n");
+		worker->data = kmalloc(sizeof(struct user_data), GFP_KERNEL);
+		copy_from_user(worker->data, (void *)arg, sizeof(struct user_data));
+		pr_debug("Pid : %d\n", worker->data->upid);
+		schedule_work(&worker->task);
+		break;
+	default:
+		pr_err("Unknow ops!\n");
+		return -ENOTTY;
+	}
+
+	return 0;
 }
 
 static int shell_mod_init(void)
 {
 	pr_debug("module loaded\n");
 
-	if(!arg_pid || !arg_sig) {
-		pr_warn("Missing parameters!\n");
-		return 0;
+	major = register_chrdev(0, name, &ops);
+	if(!major) {
+		pr_err("Major not set!\n");
+		return -1;
 	}
+	pr_info("Major device : %d\n", major);
 
 	worker = kmalloc(sizeof(struct kill_work), GFP_KERNEL);
-	worker->sig = arg_sig;
-	worker->upid = arg_pid;
-
-	/*
-	 * Do the kill in a workqueues.
-	 */
+	/* Init the struct for the workqueue for the first time. */
 	INIT_WORK(&worker->task, asyn_kill);
-	schedule_work(&worker->task);
 	return 0;
 }
 
 static void shell_mod_exit(void)
 {
 	kfree(worker);
+	unregister_chrdev(major, name);
 	pr_debug("module unloaded\n");
 }
 
