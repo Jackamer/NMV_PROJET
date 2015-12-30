@@ -4,6 +4,7 @@
 ifneq ($(KERNELRELEASE),)
 
 obj-m := src/shell_mod.o
+CFLAGS_shell_mod.o := -DDEBUG
 
 else
 
