@@ -28,7 +28,7 @@ static int kill(int sig, pid_t upid)
 	p = find_get_pid(upid);
 	if(!p)
 		goto err_find;
-	if(!kill_pid(p, sig, 0))
+	if(kill_pid(p, sig, 0) != 0)
 		goto err_kill;
 	pr_debug("Signal successful send!\n");
 	put_pid(p);
@@ -43,20 +43,21 @@ err_kill:
 	return EPERM;
 }
 
-static int mod_init(void)
+static int shell_mod_init(void)
 {
 	pr_debug("module loaded\n");
-	if(!arg_pid || !arg_sig)
+	if(!arg_pid || !arg_sig) {
 		pr_warn("Missing parameters!\n");
-		return EINVAL;
+		return 0;
+	}
 	kill(arg_sig, arg_pid);
 	return 0;
 }
 
-static void mod_exit(void)
+static void shell_mod_exit(void)
 {
 	pr_debug("module unloaded\n");
 }
 
-module_init(mod_init);
-module_exit(mod_exit);
+module_init(shell_mod_init);
+module_exit(shell_mod_exit);
