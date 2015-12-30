@@ -3,7 +3,7 @@
 
 ifneq ($(KERNELRELEASE),)
 
-obj-m := src/mod.o
+obj-m := src/shell_mod.o
 
 else
 
