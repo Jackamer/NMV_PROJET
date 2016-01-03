@@ -15,6 +15,8 @@ MODULE_DESCRIPTION("Module invite de commande");
 MODULE_AUTHOR("Arnaud GUERMONT");
 MODULE_LICENSE("GPL");
 
+DECLARE_WAIT_QUEUE_HEAD(wait_queue);
+
 struct kill_work {
 	struct kill_data *data;
 	struct work_struct task;
@@ -27,6 +29,8 @@ struct meminfo_work {
 
 struct kill_work *kill_worker;
 struct meminfo_work *meminfo_worker;
+
+static int kill_cond, meminfo_cond;
 
 /* Device major number. */
 static int major;
@@ -59,6 +63,11 @@ static void kill(struct work_struct *task)
 
 err:
 	kfree(kw->data);
+	if(!kill_cond) {
+		pr_debug("Wake up kill!\n");
+		kill_cond = 1;
+		wake_up(&wait_queue);
+	}
 }
 
 /* Get the memory state. */
@@ -69,6 +78,11 @@ static void get_meminfo(struct work_struct *task)
 	pr_debug("Doing meminfo in a workqueue!\n");
 	mw = container_of(task, struct meminfo_work, task);
 	si_meminfo(mw->meminfo);
+	if(!meminfo_cond) {
+		pr_debug("Wake up meminfo!\n");
+		meminfo_cond = 1;
+		wake_up(&wait_queue);
+	}
 }
 	
 
@@ -83,11 +97,31 @@ static long device_ops(struct file *filp, unsigned int cmd, unsigned long arg)
 		schedule_work(&kill_worker->task);
 		flush_work(&kill_worker->task);
 		break;
+	case KILL_ASYN:
+		pr_debug("kill asynchrone ops!\n");
+		/* Initialize the condition for the waitqueue. */
+		kill_cond = 0;
+		kill_worker->data = kmalloc(sizeof(struct kill_data), GFP_KERNEL);
+		copy_from_user(kill_worker->data, (void *)arg, sizeof(struct kill_data));
+		pr_debug("Pid : %d\n", kill_worker->data->upid);
+		schedule_work(&kill_worker->task);
+		wait_event(wait_queue, kill_cond);
+		break;
 	case MEMINFO:
 		pr_debug("meminfo ops!\n");
 		meminfo_worker->meminfo = kmalloc(sizeof(struct sysinfo), GFP_KERNEL);
 		schedule_work(&meminfo_worker->task);
 		flush_work(&meminfo_worker->task);
+		copy_to_user((void *)arg, meminfo_worker->meminfo, sizeof(struct sysinfo));
+		kfree(meminfo_worker->meminfo);
+		break;
+	case MEMINFO_ASYN:
+		pr_debug("meminfo asynchrone ops!\n");
+		/* Initialize the condition for the waitqueue. */
+		meminfo_cond = 0;
+		meminfo_worker->meminfo = kmalloc(sizeof(struct sysinfo), GFP_KERNEL);
+		schedule_work(&meminfo_worker->task);
+		wait_event(wait_queue, meminfo_cond);
 		copy_to_user((void *)arg, meminfo_worker->meminfo, sizeof(struct sysinfo));
 		kfree(meminfo_worker->meminfo);
 		break;
