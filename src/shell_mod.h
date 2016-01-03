@@ -5,11 +5,12 @@
 
 #define MAGIC_NUMBER 'N'
 
-struct user_data {
+struct kill_data {
 	int sig;
 	pid_t upid;
 };
 
-#define KILL _IOR(MAGIC_NUMBER, 0, struct user_data) 
+#define KILL _IOR(MAGIC_NUMBER, 0, struct kill_data)
+#define MEMINFO _IOWR(MAGIC_NUMBER, 0, struct sysinfo)
 
 #endif

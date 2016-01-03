@@ -7,6 +7,8 @@
 #include <linux/sched.h>
 #include <linux/uaccess.h>
 #include <linux/fs.h>
+#include <uapi/linux/sysinfo.h>
+#include <linux/mm.h>
 #include "shell_mod.h"
 
 MODULE_DESCRIPTION("Module invite de commande");
@@ -14,10 +16,13 @@ MODULE_AUTHOR("Arnaud GUERMONT");
 MODULE_LICENSE("GPL");
 
 struct kill_work {
-	struct user_data *data;
+	struct kill_data *data;
 	struct work_struct task;
 };
 struct kill_work *worker;
+
+struct sysinfo *meminfo;
+	
 
 /* Device major number. */
 static int major;
@@ -55,18 +60,31 @@ static void asyn_kill(struct work_struct *task)
 	kfree(kw->data);
 }
 
+/* Get the memory state. */
+static void get_meminfo(struct sysinfo *info)
+{
+	si_meminfo(info);
+}
+
 static long device_ops(struct file *filp, unsigned int cmd, unsigned long arg)
 {	
 	switch(cmd) {
 	case KILL:
 		pr_debug("kill ops!\n");
-		worker->data = kmalloc(sizeof(struct user_data), GFP_KERNEL);
-		copy_from_user(worker->data, (void *)arg, sizeof(struct user_data));
+		worker->data = kmalloc(sizeof(struct kill_data), GFP_KERNEL);
+		copy_from_user(worker->data, (void *)arg, sizeof(struct kill_data));
 		pr_debug("Pid : %d\n", worker->data->upid);
 		schedule_work(&worker->task);
 		break;
+	case MEMINFO:
+		pr_debug("meminfo ops!\n");
+		meminfo = kmalloc(sizeof(struct sysinfo), GFP_KERNEL);
+		get_meminfo(meminfo);
+		copy_to_user((void *)arg, meminfo, sizeof(struct sysinfo));
+		kfree(meminfo);
+		break;
 	default:
-		pr_err("Unknow ops!\n");
+		pr_err("Unknown ops!\n");
 		return -ENOTTY;
 	}
 
