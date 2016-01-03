@@ -19,10 +19,14 @@ struct kill_work {
 	struct kill_data *data;
 	struct work_struct task;
 };
-struct kill_work *worker;
 
-struct sysinfo *meminfo;
-	
+struct meminfo_work {
+	struct sysinfo *meminfo;
+	struct work_struct task;
+};
+
+struct kill_work *kill_worker;
+struct meminfo_work *meminfo_worker;
 
 /* Device major number. */
 static int major;
@@ -33,55 +37,59 @@ const struct file_operations ops = {
 };
 
 /* Send a signal to a process. */
-static int kill(int sig, pid_t upid)
+static void kill(struct work_struct *task)
 {
+	struct kill_work *kw;
 	struct pid *p;
 
-	p = find_get_pid(upid);
+	pr_debug("Doing kill in a workqueue!\n");
+	kw = container_of(task, struct kill_work, task);
+	p = find_get_pid(kw->data->upid);
 	if(!p) {
-		pr_err("Pid %d not found!\n", (int)upid);
-		return ESRCH;		
+		pr_err("Pid %d not found!\n", (int)kw->data->upid);
+		goto err;
 	}
-	if(kill_pid(p, sig, 0) != 0) {
-		pr_err("Fail to send sig to pid %d!\n", (int)upid);
+	if(kill_pid(p, kw->data->sig, 0) != 0) {
+		pr_err("Fail to send sig to pid %d!\n", (int)kw->data->upid);
 		put_pid(p);
-		return EPERM;
+		goto err;
 	}
 	pr_debug("Signal successful send!\n");
 	put_pid(p);
-	return 0;
-}
 
-static void asyn_kill(struct work_struct *task)
-{
-	struct kill_work *kw = container_of(task, struct kill_work, task);
-	pr_debug("Doing kill in a work_queue!\n");
-	kill(kw->data->sig, kw->data->upid);
+err:
 	kfree(kw->data);
 }
 
 /* Get the memory state. */
-static void get_meminfo(struct sysinfo *info)
+static void get_meminfo(struct work_struct *task)
 {
-	si_meminfo(info);
+	struct meminfo_work *mw;
+
+	pr_debug("Doing meminfo in a workqueue!\n");
+	mw = container_of(task, struct meminfo_work, task);
+	si_meminfo(mw->meminfo);
 }
+	
 
 static long device_ops(struct file *filp, unsigned int cmd, unsigned long arg)
 {	
 	switch(cmd) {
 	case KILL:
 		pr_debug("kill ops!\n");
-		worker->data = kmalloc(sizeof(struct kill_data), GFP_KERNEL);
-		copy_from_user(worker->data, (void *)arg, sizeof(struct kill_data));
-		pr_debug("Pid : %d\n", worker->data->upid);
-		schedule_work(&worker->task);
+		kill_worker->data = kmalloc(sizeof(struct kill_data), GFP_KERNEL);
+		copy_from_user(kill_worker->data, (void *)arg, sizeof(struct kill_data));
+		pr_debug("Pid : %d\n", kill_worker->data->upid);
+		schedule_work(&kill_worker->task);
+		flush_work(&kill_worker->task);
 		break;
 	case MEMINFO:
 		pr_debug("meminfo ops!\n");
-		meminfo = kmalloc(sizeof(struct sysinfo), GFP_KERNEL);
-		get_meminfo(meminfo);
-		copy_to_user((void *)arg, meminfo, sizeof(struct sysinfo));
-		kfree(meminfo);
+		meminfo_worker->meminfo = kmalloc(sizeof(struct sysinfo), GFP_KERNEL);
+		schedule_work(&meminfo_worker->task);
+		flush_work(&meminfo_worker->task);
+		copy_to_user((void *)arg, meminfo_worker->meminfo, sizeof(struct sysinfo));
+		kfree(meminfo_worker->meminfo);
 		break;
 	default:
 		pr_err("Unknown ops!\n");
@@ -102,15 +110,18 @@ static int shell_mod_init(void)
 	}
 	pr_info("Major device : %d\n", major);
 
-	worker = kmalloc(sizeof(struct kill_work), GFP_KERNEL);
+	kill_worker = kmalloc(sizeof(struct kill_work), GFP_KERNEL);
+	meminfo_worker = kmalloc(sizeof(struct meminfo_work), GFP_KERNEL);
 	/* Init the struct for the workqueue for the first time. */
-	INIT_WORK(&worker->task, asyn_kill);
+	INIT_WORK(&kill_worker->task, kill);
+	INIT_WORK(&meminfo_worker->task, get_meminfo);
 	return 0;
 }
 
 static void shell_mod_exit(void)
 {
-	kfree(worker);
+	kfree(kill_worker);
+	kfree(meminfo_worker);
 	unregister_chrdev(major, name);
 	pr_debug("module unloaded\n");
 }
