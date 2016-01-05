@@ -4,6 +4,7 @@
 #include <linux/ioctl.h>
 
 #define MAGIC_NUMBER 'N'
+#define STRING_SIZE 4096
 
 struct kill_data {
 	int sig;
@@ -14,5 +15,6 @@ struct kill_data {
 #define KILL_ASYN _IOR(MAGIC_NUMBER, 1, struct kill_data)
 #define MEMINFO _IOWR(MAGIC_NUMBER, 2, struct sysinfo)
 #define MEMINFO_ASYN _IOWR(MAGIC_NUMBER, 3, struct sysinfo)
+#define LSMOD _IOR(MAGIC_NUMBER, 4, char *)
 
 #endif

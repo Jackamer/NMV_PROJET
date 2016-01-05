@@ -9,7 +9,10 @@
 #include <linux/fs.h>
 #include <uapi/linux/sysinfo.h>
 #include <linux/mm.h>
+#include <linux/list.h>
 #include "shell_mod.h"
+
+#define BUFFER_SIZE 256
 
 MODULE_DESCRIPTION("Module invite de commande");
 MODULE_AUTHOR("Arnaud GUERMONT");
@@ -27,8 +30,14 @@ struct meminfo_work {
 	struct work_struct task;
 };
 
+struct lsmod_work {
+	char *data;
+	struct work_struct task;
+};
+
 struct kill_work *kill_worker;
 struct meminfo_work *meminfo_worker;
+struct lsmod_work *lsmod_worker;
 
 static int kill_cond, meminfo_cond;
 
@@ -84,6 +93,40 @@ static void get_meminfo(struct work_struct *task)
 		wake_up(&wait_queue);
 	}
 }
+
+static void lsmod(struct work_struct *task)
+{
+	struct lsmod_work *lw;
+	struct module *mod, *source;
+	char *mod_info;
+	char source_name[BUFFER_SIZE];
+	int mem_free, char_append;
+
+	pr_debug("Doing lsmod in a workqueue!\n");
+	mem_free = BUFFER_SIZE;
+	char_append = 0;
+	lw = container_of(task, struct lsmod_work, task);
+	/* modules is the head of the list of module. It's defined in /kernel/module.c */
+	list_for_each_entry(mod, &modules, list) {
+		mod_info = kmalloc(512, GFP_KERNEL);
+		mem_free -= scnprintf(mod_info, STRING_SIZE,
+				      "Module : %s Size : %8u Used by :%8u",
+				      mod->name, mod->core_size, mod->init_size);
+		if(mod->init_size > 0) {
+			list_for_each_entry(source, &mod->source_list, source_list) {
+				/* Clear the string. */
+				memset(&source_name[0], 0, BUFFER_SIZE);
+				char_append = scnprintf(source_name, BUFFER_SIZE, " Source mod : %s", source->name);
+				strncat(mod_info, source_name, mem_free - char_append);
+				mem_free -= char_append;
+			}
+		}
+		strncat(mod_info, "\n", 1);
+		strcat(lw->data, mod_info);
+		kfree(mod_info);
+	}
+}
+	
 	
 
 static long device_ops(struct file *filp, unsigned int cmd, unsigned long arg)
@@ -125,6 +168,15 @@ static long device_ops(struct file *filp, unsigned int cmd, unsigned long arg)
 		copy_to_user((void *)arg, meminfo_worker->meminfo, sizeof(struct sysinfo));
 		kfree(meminfo_worker->meminfo);
 		break;
+	case LSMOD:
+		pr_debug("lsmod ops!\n");
+		lsmod_worker->data = kmalloc(STRING_SIZE, GFP_KERNEL);;
+		schedule_work(&lsmod_worker->task);
+		flush_work(&lsmod_worker->task);
+		pr_debug("lsmod : %s", lsmod_worker->data);
+		copy_to_user((char *)arg, lsmod_worker->data, STRING_SIZE);
+		kfree(lsmod_worker->data);
+		break;		
 	default:
 		pr_err("Unknown ops!\n");
 		return -ENOTTY;
@@ -146,9 +198,11 @@ static int shell_mod_init(void)
 
 	kill_worker = kmalloc(sizeof(struct kill_work), GFP_KERNEL);
 	meminfo_worker = kmalloc(sizeof(struct meminfo_work), GFP_KERNEL);
+	lsmod_worker = kmalloc(sizeof(struct lsmod_work), GFP_KERNEL);
 	/* Init the struct for the workqueue for the first time. */
 	INIT_WORK(&kill_worker->task, kill);
 	INIT_WORK(&meminfo_worker->task, get_meminfo);
+	INIT_WORK(&lsmod_worker->task, lsmod);
 	return 0;
 }
 
@@ -156,6 +210,8 @@ static void shell_mod_exit(void)
 {
 	kfree(kill_worker);
 	kfree(meminfo_worker);
+	kfree(lsmod_worker);
+	
 	unregister_chrdev(major, name);
 	pr_debug("module unloaded\n");
 }

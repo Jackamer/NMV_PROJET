@@ -1,0 +1,23 @@
+--- include/linux/module.h.orig	2016-01-05 21:13:40.794872584 +0100
++++ include/linux/module.h	2016-01-05 20:42:55.832413040 +0100
+@@ -487,6 +487,7 @@ struct module {
+ #endif
+ 
+ extern struct mutex module_mutex;
++extern struct list_head modules;
+ 
+ /* FIXME: It'd be nice to isolate modules during init, too, so they
+    aren't used before they (may) fail.  But presently too much code
+--- kernel/module.c.orig	2016-01-05 21:11:22.042620031 +0100
++++ kernel/module.c	2016-01-05 20:40:57.104263583 +0100
+@@ -100,7 +100,9 @@
+  * (delete and add uses RCU list operations). */
+ DEFINE_MUTEX(module_mutex);
+ EXPORT_SYMBOL_GPL(module_mutex);
+-static LIST_HEAD(modules);
++LIST_HEAD(modules);
++/* Export the symbol for the iteration of all modules by a module */
++EXPORT_SYMBOL(modules);
+ 
+ #ifdef CONFIG_MODULES_TREE_LOOKUP
+ 
